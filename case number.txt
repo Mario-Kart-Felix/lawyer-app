@@ -1,0 +1,344 @@
+
+Information extraction from Madison city crime incident reports using Deep Learning
+Table of Contents
+Introduction
+Prerequisites
+Imports
+Data preparation
+EntityRecognizer model
+Finding optimum learning rate
+Model training
+Evaluate model performance
+Validate results
+Save and load trained models
+Model inference
+Publishing the results as feature layer
+Visualize crime incident on map
+Create a hot spot map of crime densities
+Conclusion
+References
+Introduction
+Crime analysis is an essential part of efficient law enforcement for any city. It involves:
+
+Collecting data in a form that can be analyzed.
+Identifying spatial/non-spatial patterns and trends in the data.
+Informed decision making based on the analysis.
+In order to start the analysis, the first and foremost requirement is analyzable data. A huge volume of data is present in the witness and police narratives of the crime incident. Few examples of such information are:
+
+Place of crime
+Nature of crime
+Date and time of crime
+Suspect
+Witness
+Extracting such information from incident reports requires tedious work. Crime analysts have to sift through piles of police reports to gather and organize this information.
+
+With recent advancements in Natural Language Processing and Deep learning, it's possible to devise an automated workflow to extract information from such unstructured text documents. In this notebook we will extract information from crime incident reports obtained from Madison police department [1]using arcgis.learn's EntityRecognizer class.
+
+Prerequisites
+Data preparation and model training workflows using arcgis.learn is based on spaCy & Hugging Face Transformers libraries. A user can choose an appropriate backbone / library to train his/her model.
+Refer to the section "Install deep learning dependencies of arcgis.learn module" on this page for detailed documentation on installation of the dependencies.
+Labelled data: In order for EntityRecognizer to learn, it needs to see examples that have been labelled for all the custom categories that the model is expected to extract. Labelled data for this sample notebook is located at data/EntityRecognizer/labelled_crime_reports.json.
+To learn how to use Doccano[2] for labelling text, please see the guide on Labeling text using Doccano.
+Test documents to extract named entities are in a zipped file at data/EntityRecognizer/reports.zip.
+To learn more on how EntityRecognizer works, please see the guide on Named Entity Extraction Workflow with arcgis.learn.
+Necessary Imports
+In [1]:
+import re
+import os
+import pandas as pd
+import zipfile,unicodedata
+from itertools import repeat
+from pathlib import Path
+from datetime import datetime
+
+from arcgis.gis import GIS
+from arcgis.learn import prepare_data
+from arcgis.learn.text import EntityRecognizer
+from arcgis.geocoding import batch_geocode
+In [2]:
+# gis = GIS('home') 
+
+gis = GIS('https://geosaurus.maps.arcgis.com/', 'arcgis_python', 'P@ssword123')
+Data preparation
+Data preparation involves splitting the data into training and validation sets, creating the necessary data structures for loading data into the model and so on. The prepare_data() function can directly read the training samples in one of the above specified formats and automate the entire process.
+
+In [3]:
+training_data = gis.content.get('b2a1f479202244e798800fe43e0c3803')
+training_data
+Out[3]:
+
+information-extraction-from-madison-city-crime-incident-reports-using-deep-learning
+Image Collection by api_data_owner
+Last Modified: August 26, 2020
+0 comments, 64 views
+In [4]:
+filepath = training_data.download(file_name=training_data.name)
+In [5]:
+import zipfile
+with zipfile.ZipFile(filepath, 'r') as zip_ref:
+    zip_ref.extractall(Path(filepath).parent)
+In [6]:
+json_path = Path(os.path.join(os.path.splitext(filepath)[0] , 'labelled_crime_reports.json'))
+In [7]:
+data = prepare_data(path= json_path, dataset_type='ner_json', class_mapping={'address_tag':'Address'})
+The show_batch() method can be used to visualize the training samples, along with labels.
+
+In [9]:
+data.show_batch()
+Out[9]:
+text	Address	Crime	Crime_datetime	Reported_date	Reported_time	Reporting_officer	Weapon
+0	A McDonald's employee suffered a knee injury a...	[Odana Rd. restaurant]	[strong-armed robbery, grabbed money]	[Monday night]	[01/19/2016]	[9:44 AM]	[PIO Joel Despain]	
+1	A 13-year-old boy, who pointed a handgun at a ...	[1500 block of Troy]	[disorderly conduct while armed]	[last night]	[10/12/2016]	[10:11 AM]	[PIO Joel Despain]	[handgun, pellet gun, BB or pellet gun]
+2	One man has been arrested and another is being...	[intersection of E. Washington Ave. and N. Sto...	[shooting, firing the gun]	[Sunday evening]	[01/04/2016]	[10:45 AM]		[BB gun, BB gun, BB gun]
+3	Several deli employees and a diner - who happe...	[Stalzy's Deli, 2701 Atwood Ave.]	[burglary, stole money, stolen money]		[09/24/2018]	[9:59 AM]	[PIO Joel Despain]	
+4	A Madison man was arrested Saturday inside Eas...	[East Towne Mall]	[disturbance]		[05/09/2016]	[9:52 AM]	[PIO Joel Despain]	[handgun, BB gun]
+5	A knife-wielding man, who threatened a couple ...	[State St., downtown]	[racial slurs and vulgarities, stab, yelling a...	[Sunday afternoon]	[11/12/2018]	[10:02 AM]	[PIO Joel Despain]	[knife, knife]
+6	A MPD officer activated his squad car lights h...	[E. Gorham St.]	[crash, intoxicated, drunken driving, driving ...		[12/21/2018]	[11:29 AM]	[PIO Joel Despain]	
+7	A suspected drug dealer attempted to destroy 5...	[Monday, Sherman Ave. apartment,]	[destroy 50 grams of fentanyl laced heroin]		[12/04/2018]	[11:45 AM]	[PIO Joel Despain]	[handgun]
+EntityRecognizer model
+EntityRecognizer model in arcgis.learn can be used with spaCy's EntityRecognizer backbone or with Hugging Face Transformers backbones
+
+Run the command below to see what backbones are supported for the entity recognition task.
+
+In [10]:
+print(EntityRecognizer.supported_backbones)
+['spacy', 'BERT', 'RoBERTa', 'DistilBERT', 'ALBERT', 'CamemBERT', 'MobileBERT', 'XLNet', 'XLM', 'XLM-RoBERTa', 'FlauBERT', 'ELECTRA', 'Longformer']
+Call the model's available_backbone_models() method with the backbone name to get the available models for that backbone. The call to available_backbone_models method will list out only few of the available models for each backbone. Visit this link to get a complete list of models for each of the transformer backbones. To know more choosing an appropriate transformer model for your dataset, visit this link
+
+Note - Only a single model is available to train EntityRecognizer model with spaCy backbone
+
+In [11]:
+print(EntityRecognizer.available_backbone_models("spacy"))
+('spacy',)
+First we will create model using the EntityRecognizer() constructor and passing it the data object.
+
+In [12]:
+ner = EntityRecognizer(data, backbone="spacy")
+Finding optimum learning rate
+The learning rate[3] is a tuning parameter that determines the step size at each iteration while moving toward a minimum of a loss function, it represents the speed at which a machine learning model "learns". arcgis.learn includes learning rate finder, and is accessible through the model's lr_find() method, that can automatically select an optimum learning rate, without requiring repeated experiments.
+
+In [13]:
+lr = ner.lr_find()
+
+Model training
+Training the model is an iterative process. We can train the model using its fit() method till the F1 score (maximum possible value = 1) continues to improve with each training pass, also known as epoch. This is indicative of the model getting better at predicting the correct labels.
+
+In [14]:
+ner.fit(epochs=30, lr=lr)
+epoch	losses	val_loss	precision_score	recall_score	f1_score	time
+0	75.57	11.45	0.0	0.0	0.0	00:00:04
+1	18.67	10.35	0.9	0.09	0.16	00:00:04
+2	18.28	10.19	0.9	0.37	0.52	00:00:04
+3	15.49	23.08	0.5	0.25	0.34	00:00:04
+4	20.66	17.26	0.37	0.11	0.17	00:00:03
+5	18.31	41.41	0.56	0.36	0.44	00:00:04
+6	14.72	30.0	0.46	0.25	0.33	00:00:04
+7	26.54	31.75	0.06	0.01	0.02	00:00:04
+8	24.01	19.76	0.0	0.0	0.0	00:00:04
+9	23.53	10.63	0.7	0.44	0.54	00:00:04
+10	15.94	12.13	0.64	0.43	0.51	00:00:04
+11	16.08	9.38	0.72	0.49	0.58	00:00:04
+12	13.99	15.88	0.65	0.43	0.51	00:00:04
+13	13.59	8.89	0.62	0.51	0.56	00:00:04
+14	11.67	5.88	0.61	0.55	0.58	00:00:04
+15	12.73	8.47	0.6	0.49	0.53	00:00:04
+16	14.72	20.34	0.69	0.51	0.59	00:00:04
+17	42.79	26.58	0.28	0.07	0.11	00:00:05
+18	24.08	6.53	0.75	0.62	0.68	00:00:04
+19	12.18	5.47	0.75	0.62	0.68	00:00:04
+20	18.09	18.48	0.75	0.67	0.71	00:00:05
+21	13.41	6.17	0.82	0.82	0.82	00:00:05
+22	11.68	5.91	0.81	0.8	0.8	00:00:04
+23	11.07	3.77	0.88	0.88	0.88	00:00:04
+24	11.49	4.8	0.9	0.83	0.86	00:00:04
+25	11.1	3.45	0.94	0.93	0.94	00:00:04
+26	8.87	1.92	0.95	0.94	0.95	00:00:05
+27	10.12	2.69	0.96	0.96	0.96	00:00:04
+28	9.75	1.4	0.98	0.98	0.98	00:00:04
+29	8.97	2.9	0.97	0.97	0.97	00:00:04
+Evaluate model performance
+Important metrics to look at while measuring the performance of the EntityRecognizer model are Precision, Recall & F1-measures [4].
+
+In [15]:
+ner.precision_score()
+Out[15]:
+0.97
+In [16]:
+ner.recall_score()
+Out[16]:
+0.97
+In [17]:
+ner.f1_score()
+Out[17]:
+0.97
+To find precision, recall & f1 scores per label/class we will call the model's metrics_per_label() method.
+
+In [18]:
+ner.metrics_per_label()
+Out[18]:
+Precision_score	Recall_score	F1_score
+Address	1.00	1.00	1.00
+Reporting_officer	1.00	1.00	1.00
+Reported_date	1.00	0.93	0.97
+Crime	0.96	1.00	0.98
+Crime_datetime	1.00	1.00	1.00
+Reported_time	1.00	1.00	1.00
+Weapon	0.78	0.78	0.78
+Validate results
+Now we have the trained model, let's look at how the model performs.
+
+In [19]:
+ner.show_results()
+
+ 100.00% [8/8 00:00<00:00]
+Out[19]:
+TEXT	Filename	Address	Crime	Crime_datetime	Reported_date	Reported_time	Reporting_officer	Weapon
+0	Madison Police responded at 22:10 to the 500 b...	Example_0	500 block of South Park Street	armed robbery,rob	22:10	12/26/2017	5:39 AM	Sgt. Paul Jacobsen	
+1	Officers responded to an alarm at Dick's Sport...	Example_1	Dick's Sporting Goods, 237 West Towne Mall				3:37 AM	Lt. Timothy Radke	13 airsoft and pellet guns, which appeared to ...
+2	The MPD arrested an 18-year-old man on a tenta...	Example_2	Memorial High School	disorderly conduct	after 5:30 p.m. yesterday afternoon	05/05/2017	1:55 PM	PIO Joel Despain	
+3	A convenience store clerk was robbed at gunpoi...	Example_3	7-Eleven, 2703 W. Beltline Highway	robbed at gunpoint		12/14/2017	9:28 AM	PIO Joel Despain	weapon
+4	A convenience store clerk was robbed at gunpoi...	Example_3	south on Todd Dr.	robbed at gunpoint		12/14/2017	9:28 AM	PIO Joel Despain	weapon
+5	Madison police officers were dispatched to the...	Example_4	East Towne Mall	overdosed on heroin,injecting heroin,possessio...		02/26/2018	7:40 AM	Lt. Jason Ostrenga	Syringes,
+6	A Sun Prairie woman and her nine-year-old gran...	Example_5	E. Washington Ave.	crash,drunken driver,hit-and-run,fifth offense...		05/17/2017	10:38 AM	PIO Joel Despain	
+7	Madison police officers were dispatched to the...	Example_6	East Towne Mall	overdosed on heroin,injecting heroin,possessio...		02/26/2018	7:40 AM	Lt. Jason Ostrenga	Syringes,
+8	Victim reporting that he was pistol whipped in...	Example_7	3400 block of N Sherman Ave			09/18/2017	9:30 PM	Sgt. Rosemarie Mansavage	
+Save and load trained models
+Once you are satisfied with the model, you can save it using the save() method. This creates an Esri Model Definition (EMD file) that can be used for inferencing on new data. Saved models can also be loaded back using the load() method. load() method takes the path to the emd file as a required argument.
+
+In [20]:
+ner.save('crime_model')
+Model Inference
+Now we can use the trained model to extract entities from new text documents using extract_entities() method. This method expects the folder path of where new text document are located, or a list of text documents.
+
+In [21]:
+reports = os.path.join(filepath.split('.')[0] , 'reports')
+In [22]:
+results = ner.extract_entities(reports) #extract_entities()also accepts path of the documents folder as an argument.
+
+ 100.00% [1501/1501 00:12<00:00]
+In [23]:
+results.head()
+Out[23]:
+TEXT	Filename	Address	Crime	Crime_datetime	Reported_date	Reported_time	Reporting_officer	Weapon
+0	Officers were dispatched to a robbery of the A...	0.txt	Associated Bank in the 1500 block of W Broadway	robbery,demanded money		08/09/2018	6:17 PM	Sgt. Jennifer Kane	
+1	The MPD was called to Pink at West Towne Mall ...	1.txt	Pink at West Towne Mall	thefts at	Tuesday night	08/18/2016	10:37 AM	PIO Joel Despain	
+2	The MPD is seeking help locating a unique $1,5...	10.txt	Union St.	stolen,thief cut,stolen		08/17/2016	11:09 AM	PIO Joel Despain	
+3	A Radcliffe Drive resident said three men - at...	100.txt	Radcliffe Drive	armed robbery	early this morning	08/07/2018	11:17 AM	PIO Joel Despain	handguns
+4	Madison Police officers were near the intersec...	1001.txt	intersection of Francis Street and State Street			08/10/2018	4:20 AM	Lt. Daniel Nale	gunshot
+Publishing the results as a feature layer
+The code below geocodes the extracted address and publishes the results as a feature layer.
+
+In [24]:
+# This function generates x,y coordinates based on the extracted location from the model.
+
+def geocode_locations(processed_df, city, region, address_col):
+    #creating address with city and region
+    add_miner = processed_df[address_col].apply(lambda x: x+f', {city} '+f', {region}') 
+    chunk_size = 200
+    chunks = len(processed_df[address_col])//chunk_size+1
+    batch = list()
+    for i in range(chunks):
+        batch.extend(batch_geocode(list(add_miner.iloc[chunk_size*i:chunk_size*(i+1)])))
+    batch_geo_codes = []
+    for i,item in enumerate(batch):
+        if isinstance(item,dict):
+            if (item['score'] > 90 and 
+                    item['address'] != f'{city}, {region}'
+                    and item['attributes']['City'] == f'{city}'):
+                batch_geo_codes.append(item['location'])
+            else:
+                batch_geo_codes.append('')    
+        else:
+            batch_geo_codes.append('') 
+    processed_df['geo_codes'] = batch_geo_codes    
+    return processed_df
+In [25]:
+#This function converts the dataframe to a spatailly enabled dataframe.
+
+def prepare_sdf(processed_df):
+    processed_df['geo_codes_x'] = 'x'
+    processed_df['geo_codes_y'] = 'y'
+    for i,geo_code in processed_df['geo_codes'].iteritems():
+        if geo_code == '': 
+            processed_df.drop(i, inplace=True) #dropping rows with empty location
+        else:
+            processed_df['geo_codes_x'].loc[i] = geo_code.get('x')
+            processed_df['geo_codes_y'].loc[i] = geo_code.get('y')
+    
+    sdf = processed_df.reset_index(drop=True)
+    sdf['geo_x_y'] = sdf['geo_codes_x'].astype('str') + ',' +sdf['geo_codes_y'].astype('str')
+    sdf = pd.DataFrame.spatial.from_df(sdf, address_column='geo_x_y') #adding geometry to the dataframe
+    sdf.drop(['geo_codes_x','geo_codes_y','geo_x_y','geo_codes'], axis=1, inplace=True) #dropping redundant columns
+    return sdf
+In [26]:
+#This function will publish the spatical dataframe as a feature layer.
+
+def publish_to_feature(df, gis, layer_title:str, tags:str, city:str, 
+                       region:str, address_col:str):
+    processed_df = geocode_locations(df, city, region, address_col)
+    sdf = prepare_sdf(processed_df)
+    try:        
+        layer = sdf.spatial.to_featurelayer(layer_title, gis,tags) 
+    except:
+        layer = sdf.spatial.to_featurelayer(layer_title, gis, tags)
+
+    return layer    
+In [27]:
+# This will take few minutes to run
+madison_crime_layer = publish_to_feature(results, gis, layer_title='Madison_Crime' + str(datetime.now().microsecond), 
+                                         tags='nlp,madison,crime', city='Madison', 
+                                         region='WI', address_col='Address')
+In [28]:
+madison_crime_layer
+Out[28]:
+
+Madison_Crime
+Feature Layer Collection by arcgis_python
+Last Modified: February 24, 2020
+0 comments, 0 views
+Visualize crime incident on map
+In [22]:
+result_map = gis.map('Madison, Wisconsin')
+result_map.basemap = 'topographic'
+In [23]:
+result_map
+Out[23]:
+
+In [24]:
+result_map.add_layer(madison_crime_layer)
+Create a hot spot map of crime densities
+ArcGIS has a set of tools to help us identify, quantify and visualize spatial patterns in our data by identifying areas of statistically significant clusters.
+
+The find_hot_spots tool allows us to visualize areas having such clusters.
+
+In [25]:
+from arcgis.features.analyze_patterns import find_hot_spots
+In [26]:
+crime_hotspots_madison = find_hot_spots(madison_crime_layer, 
+                                        context={"extent":
+                                                 {"xmin":-10091700.007046243,"ymin":5225939.095608932,
+                                                  "xmax":-9731528.729766665,"ymax":5422840.88047145,
+                                                  "spatialReference":{"wkid":102100,"latestWkid":3857}}},
+                                        output_name="crime_hotspots_madison" + str(datetime.now().microsecond))
+In [27]:
+hotspot_map = gis.map('Madison, Wisconsin')
+hotspot_map.basemap = 'terrain'
+In [28]:
+hotspot_map
+Out[28]:
+
+In [29]:
+hotspot_map.add_layer(crime_hotspots_madison)
+hotspot_map.legend = True
+Conclusion
+This sample demonstrates how EntityRecognizer() from arcgis.learn can be used for information extraction from crime incident reports, which is an essential requirement for crime analysis. Then, we see how can this information be geocoded and visualized on a map for further analysis.
+
+References
+[1]: Police Incident Reports(City of Madison)
+
+[2]: Doccano : text annotation tool for humans
+
+[3]: Learning rate
+
+[4]: Precision, recall and F1-measures
+case numbers sapd-2021-0091013 badge #1616
